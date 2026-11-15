@@ -1,0 +1,953 @@
+mod crash_handler;
+mod diagnostics;
+mod elevation;
+mod error;
+mod portable;
+mod settings;
+pub use settings::ClickerSettings;
+mod app_events;
+mod app_state;
+mod autostart;
+mod click_point_picker;
+mod custom_stop_zone_picker;
+mod engine;
+mod hotkeys;
+mod icon;
+mod indicator;
+mod logging;
+mod notifications;
+mod overlay;
+mod session_end;
+mod startup;
+mod theme_window;
+mod ui_commands;
+mod updates;
+mod webview_guard;
+mod window_lifecycle;
+
+pub use crate::app_state::ClickerStatusPayload;
+pub use crate::app_state::{ClickerState, IconState};
+use crate::engine::worker::emit_status;
+use crate::error::poisoned_inner;
+use crate::hotkeys::register_hotkey_inner;
+use crate::hotkeys::start_hotkey_listener;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::{AppHandle, Emitter, Listener, Manager};
+
+#[cfg(target_os = "windows")]
+fn disable_browser_accelerator_keys(window: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
+    use windows_core::Interface;
+
+    let _ = window.with_webview(|webview| {
+        let controller = webview.controller();
+        let core = match unsafe { controller.CoreWebView2() } {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("[WebView2] Failed to get CoreWebView2: {e:?}");
+                return;
+            }
+        };
+        let settings = match unsafe { core.Settings() } {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("[WebView2] Failed to get Settings: {e:?}");
+                return;
+            }
+        };
+
+        // Cast to ICoreWebView2Settings3 to disable browser accelerator keys
+        if let Ok(settings3) = settings.cast::<ICoreWebView2Settings3>() {
+            match unsafe { settings3.SetAreBrowserAcceleratorKeysEnabled(false) } {
+                Ok(()) => {
+                    log::info!("[WebView2] Browser accelerator keys disabled (F6, Ctrl+F, etc.)")
+                }
+                Err(e) => {
+                    log::warn!("[WebView2] Failed to disable browser accelerator keys: {e:?}")
+                }
+            }
+        } else {
+            log::warn!(
+                "[WebView2] ICoreWebView2Settings3 not available (WebView2 runtime too old?)"
+            );
+        }
+    });
+}
+
+pub static ZONE_MONITOR_RUNNING: AtomicBool = AtomicBool::new(false);
+
+const STATUS_EVENT: &str = "clicker-status";
+
+#[cfg(target_os = "windows")]
+pub(crate) fn force_foreground(window: &tauri::WebviewWindow) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
+    };
+
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(raw) = handle.as_raw() else {
+        return;
+    };
+
+    let hwnd = raw.hwnd.get() as *mut std::ffi::c_void;
+    let _ = apply_ws_ex_noactivate(window, false);
+    unsafe {
+        let foreground = GetForegroundWindow();
+        if foreground == hwnd {
+            return;
+        }
+        let mut pid: u32 = 0;
+        let foreground_thread = GetWindowThreadProcessId(foreground, &mut pid);
+        let current_thread = GetCurrentThreadId();
+        let attached = foreground_thread != 0
+            && foreground_thread != current_thread
+            && AttachThreadInput(foreground_thread, current_thread, 1) != 0;
+        SetForegroundWindow(hwnd);
+        if attached {
+            AttachThreadInput(foreground_thread, current_thread, 0);
+        }
+        if GetForegroundWindow() != hwnd {
+            let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+        }
+    }
+}
+
+/// Adds or removes `WS_EX_NOACTIVATE` on a window and returns the resulting
+/// style. The extended style is cached in the window frame, so a bare
+/// `SetWindowLongPtr` can leave the old behaviour in place; the frame change
+/// below is what makes the new style take effect.
+fn apply_ws_ex_noactivate(window: &tauri::WebviewWindow, enable: bool) -> Option<u32> {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, SWP_FRAMECHANGED,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WS_EX_NOACTIVATE,
+    };
+
+    let Ok(handle) = window.window_handle() else {
+        return None;
+    };
+    let RawWindowHandle::Win32(w) = handle.as_raw() else {
+        return None;
+    };
+    let hwnd = w.hwnd.get() as *mut std::ffi::c_void;
+
+    unsafe {
+        let current = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let wanted = if enable {
+            current | WS_EX_NOACTIVATE
+        } else {
+            current & !WS_EX_NOACTIVATE
+        };
+        if wanted == current {
+            return Some(current);
+        }
+        // `SetWindowLongPtrW` returns the previous value, which is 0 on both
+        // success and failure when the old style was 0, so read the error out
+        // of band instead.
+        SetLastError(0);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, wanted as isize);
+        let error = GetLastError();
+        if error != 0 {
+            log::warn!(
+                "[Window] Could not change WS_EX_NOACTIVATE: {}",
+                std::io::Error::from_raw_os_error(error as i32)
+            );
+            return Some(current);
+        }
+        SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED
+                | SWP_NOMOVE
+                | SWP_NOSIZE
+                | SWP_NOZORDER
+                | SWP_NOOWNERZORDER
+                | SWP_NOACTIVATE,
+        );
+        Some(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32)
+    }
+}
+
+fn is_rtss_running() -> bool {
+    crate::engine::process::is_process_running("RTSS.exe")
+}
+
+const DEFAULT_BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+
+fn debug_browser_args() -> Option<String> {
+    let extra = std::env::var("BLUR_WEBVIEW_ARGS").ok()?;
+    let extra = extra.trim();
+    if extra.is_empty() {
+        return None;
+    }
+    Some(format!("{DEFAULT_BROWSER_ARGS} {extra}"))
+}
+
+fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
+    let mut builder =
+        tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+            .title("BlurAutoClicker")
+            .visible(false)
+            .inner_size(500.0, 150.0)
+            .resizable(false)
+            .fullscreen(false)
+            .decorations(false)
+            .transparent(true)
+            .maximizable(false)
+            .shadow(false);
+
+    // Set our own icon at creation so Windows associates the window with it
+    // rather than the bundled EXE icon resource (which can shadow runtime
+    // updates in release builds).
+    if let Some(icon) = crate::icon::default_icon_image() {
+        builder = builder.icon(icon)?;
+    }
+
+    if let Some(dir) = crate::portable::webview_dir("main") {
+        log::info!("[Window] Main window webview data dir: {}", dir.display());
+        builder = builder.data_directory(dir);
+    }
+
+    if let Some(args) = debug_browser_args() {
+        builder = builder.additional_browser_args(&args);
+    }
+
+    let window = builder.build()?;
+
+    // Re-apply the window icon once the window is registered with the taskbar
+    // (first focus/resize), because Explorer may have cached the EXE icon into
+    // the taskbar slot before our WM_SETICON at creation arrived.
+    #[cfg(target_os = "windows")]
+    {
+        let applied = std::sync::atomic::AtomicBool::new(false);
+        let handle = app.handle().clone();
+        window.on_window_event(move |event| {
+            let fire = matches!(
+                event,
+                tauri::WindowEvent::Focused(true) | tauri::WindowEvent::Resized(_)
+            ) && !applied.swap(true, std::sync::atomic::Ordering::SeqCst);
+            if fire {
+                crate::icon::set_app_icons(&handle);
+            }
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn set_app_aumid() {
+    use windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
+
+    // A stable, explicit AppUserModelID so Windows Explorer does not group or
+    // cache this app under the bundled EXE icon, which otherwise shadows
+    // runtime icon updates in release builds.
+    let wide: Vec<u16> = "BlurAutoClicker.App"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let hr = SetCurrentProcessExplicitAppUserModelID(wide.as_ptr());
+        if hr < 0 {
+            log::warn!("[icon] SetCurrentProcessExplicitAppUserModelID failed: HRESULT {hr:#x}");
+        }
+    }
+}
+
+fn setup_panic_hook() {
+    std::panic::set_hook(Box::new(|info| {
+        let msg = info.to_string();
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_default();
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let report = format!("Panic: {msg}\nLocation: {location}\nBacktrace:\n{backtrace}");
+
+        log::error!("[Crash] {report}");
+
+        crate::diagnostics::write_panic_report(&report);
+
+        // The dialog below pumps the thread's messages. During a Windows
+        // shutdown that re-enters the event loop, which is how one panic
+        // becomes two, and it holds the machine while the user is trying to
+        // log off. The report is already on disk.
+        if crate::session_end::shutdown_requested() {
+            log::error!("[Crash] Windows is ending the session; skipping the fatal error dialog");
+            return;
+        }
+
+        let body = format!(
+            "BlurAutoClicker encountered a fatal error and needs to close.
+
+Error code: {}
+
+Please check the log for details.",
+            crate::webview_guard::E_PANIC
+        );
+        if !crate::webview_guard::claim_startup_report() {
+            return;
+        }
+        log::error!(
+            "[Startup] Dialog {}: {}",
+            crate::webview_guard::E_PANIC,
+            body.replace('\n', " / ")
+        );
+
+        unsafe {
+            use windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW;
+            use windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONERROR;
+            let wide: Vec<u16> = format!(
+                "BlurAutoClicker 遇到严重错误，需要关闭。\n\n错误代码：{}\n\n详情请查看日志。",
+                crate::webview_guard::E_PANIC
+            )
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+            let title: Vec<u16> = format!("BlurAutoClicker - {}", crate::webview_guard::E_PANIC)
+                .encode_utf16()
+                .chain(std::iter::once(0))
+                .collect();
+            MessageBoxW(
+                std::ptr::null_mut(),
+                wide.as_ptr(),
+                title.as_ptr(),
+                MB_ICONERROR,
+            );
+        }
+
+        crate::webview_guard::release_startup_report();
+    }));
+}
+
+/// In a dev build the WebView2 browser process inherits the app's stderr and
+/// prints its own shutdown complaint ("Failed to unregister class
+/// Chrome_WidgetWin_0", which is what Error 1412 looks like) on every close.
+/// Nothing reads that, and the runtime's logging switches do not apply because
+/// Chromium emits it after its log sink is gone, so point stderr at NUL before
+/// the browser process exists. stdout and the log files are untouched.
+#[cfg(all(target_os = "windows", debug_assertions))]
+fn silence_inherited_stderr() {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Console::{SetStdHandle, STD_ERROR_HANDLE};
+
+    let Ok(null) = std::fs::OpenOptions::new().write(true).open("NUL") else {
+        return;
+    };
+    if unsafe { SetStdHandle(STD_ERROR_HANDLE, null.as_raw_handle() as *mut _) } == 0 {
+        return;
+    }
+    // Keeping the handle open for the life of the process is the point.
+    std::mem::forget(null);
+}
+
+fn setup_logging(app: &AppHandle) {
+    use tauri_plugin_log::{RotationStrategy, Target, TargetKind, TimezoneStrategy};
+
+    let _ = crate::diagnostics::ensure_diagnostics_dirs();
+
+    let log_level = if cfg!(debug_assertions) {
+        log::LevelFilter::Trace
+    } else {
+        log::LevelFilter::Info
+    };
+    let log_dir = crate::diagnostics::logs_dir()
+        .unwrap_or_else(|| std::env::temp_dir().join("BlurAutoClicker-logs"));
+    let _ = app.plugin(
+        tauri_plugin_log::Builder::default()
+            .targets([
+                Target::new(TargetKind::Stdout),
+                Target::new(TargetKind::Folder {
+                    path: log_dir,
+                    file_name: Some("session".to_string()),
+                }),
+                Target::new(TargetKind::Webview),
+                Target::new(TargetKind::Dispatch(
+                    crate::app_events::create_app_events_target(),
+                )),
+            ])
+            .level(log_level)
+            .level_for("tao", log::LevelFilter::Warn)
+            .max_file_size(2_500_000)
+            .rotation_strategy(RotationStrategy::KeepSome(1))
+            .timezone_strategy(TimezoneStrategy::UseLocal)
+            .format(crate::logging::format_line)
+            .build(),
+    );
+}
+
+fn show_main_window(app: &AppHandle) {
+    crate::window_lifecycle::on_show(app);
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    #[cfg(target_os = "windows")]
+    let _ = apply_ws_ex_noactivate(&window, false);
+    let _ = window.unminimize();
+    if window.show().is_ok() {
+        let _ = app.emit("minimized-changed", false);
+    }
+    crate::icon::set_app_icons(app);
+    let _ = window.set_focus();
+}
+
+fn setup_tray(app: &AppHandle) -> Result<(), tauri::Error> {
+    let show_item = MenuItem::with_id(app, "show", "显示", true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+    let icon = crate::icon::default_icon_image().or_else(|| app.default_window_icon().cloned());
+    let mut builder = TrayIconBuilder::with_id("main")
+        .menu(&menu)
+        .tooltip("BlurAutoClicker");
+    if let Some(image) = icon {
+        builder = builder.icon(image);
+    }
+
+    builder
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "show" => {
+                show_main_window(app);
+            }
+            "quit" => {
+                crate::app_events::APP_EVENTS_SHUTDOWN
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                crate::overlay::OVERLAY_THREAD_RUNNING
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+                crate::click_point_picker::cancel_click_point_pick_inner(app);
+                crate::custom_stop_zone_picker::cancel_custom_stop_zone_pick_inner(app);
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                let app = tray.app_handle();
+                show_main_window(app);
+            }
+        })
+        .build(app)?;
+
+    TRAY_AVAILABLE.store(true, std::sync::atomic::Ordering::SeqCst);
+
+    Ok(())
+}
+
+fn spawn_overlay_auto_hide(app: &AppHandle) {
+    let auto_hide_handle = app.clone();
+    std::thread::spawn(move || {
+        while crate::overlay::OVERLAY_THREAD_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            overlay::check_auto_hide(&auto_hide_handle);
+        }
+    });
+}
+
+fn spawn_start_zone_monitor(app: &AppHandle) {
+    let handle = app.clone();
+    ZONE_MONITOR_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
+    std::thread::spawn(move || {
+        let mut prev_in_start_zone = false;
+        let mut prev_has_start_zones = false;
+        let mut cached_zones: Vec<crate::settings::StopZoneConfig> = Vec::new();
+        while ZONE_MONITOR_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            let state = handle.state::<ClickerState>();
+
+            let has_start_zones = {
+                let settings = state.settings.lock().unwrap_or_else(poisoned_inner);
+                let has = settings.stop_zones_enabled
+                    && settings.stop_zones.iter().any(|z| z.action == "start");
+                if has && settings.stop_zones != cached_zones {
+                    cached_zones = settings.stop_zones.clone();
+                }
+                has
+            };
+
+            if !has_start_zones {
+                prev_in_start_zone = false;
+                prev_has_start_zones = false;
+                continue;
+            }
+
+            let zones = &cached_zones;
+
+            let cursor = match crate::engine::mouse::current_cursor_position() {
+                Some(c) => c,
+                None => continue,
+            };
+
+            let in_start_zone = zones.iter().any(|z| {
+                z.action == "start"
+                    && cursor.0 >= z.x
+                    && cursor.0 < z.x + z.width
+                    && cursor.1 >= z.y
+                    && cursor.1 < z.y + z.height
+            });
+
+            if !prev_has_start_zones {
+                prev_in_start_zone = in_start_zone;
+            }
+            prev_has_start_zones = true;
+
+            let running = state.running.load(std::sync::atomic::Ordering::SeqCst);
+            let zone_owns_run = crate::engine::worker::zone_claim_matches(
+                state
+                    .zone_started_generation
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                state
+                    .run_generation
+                    .load(std::sync::atomic::Ordering::SeqCst),
+            );
+
+            // Transition: outside → inside, start clicker if off
+            if in_start_zone && !prev_in_start_zone && !running {
+                if let Err(e) = crate::engine::worker::start_clicker_from_start_zone(&handle) {
+                    log::error!("[ZoneMonitor] start failed: {e}");
+                }
+            }
+            // Transition: inside → outside, stop clicker if we started it
+            else if !in_start_zone && prev_in_start_zone && zone_owns_run && running {
+                if let Err(e) = crate::engine::worker::stop_clicker_inner(
+                    &handle,
+                    Some(String::from("Left start zone")),
+                ) {
+                    log::error!("[ZoneMonitor] stop failed: {e}");
+                }
+            }
+
+            prev_in_start_zone = in_start_zone;
+        }
+    });
+}
+
+fn setup_hotkeys(app: &AppHandle) -> Result<(), std::io::Error> {
+    let initial_hotkey = {
+        let state = app.state::<ClickerState>();
+        let hotkey = state
+            .settings
+            .lock()
+            .unwrap_or_else(poisoned_inner)
+            .hotkey
+            .clone();
+        hotkey
+    };
+
+    start_hotkey_listener(app.clone());
+    if let Err(err) = register_hotkey_inner(app, initial_hotkey) {
+        log::warn!("[Hotkeys] startup registration failed: {err}");
+        *app.state::<ClickerState>()
+            .warning
+            .lock()
+            .unwrap_or_else(poisoned_inner) = Some(String::from(
+            "快捷键注册失败，请换一个快捷键。",
+        ));
+    }
+    emit_status(app);
+    Ok(())
+}
+
+static FRONTEND_HANDLED: AtomicBool = AtomicBool::new(false);
+pub static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
+
+fn run_after(app: &AppHandle, delay_ms: u64, task: impl FnOnce(AppHandle) + Send + 'static) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        let inner = handle.clone();
+        let _ = handle.run_on_main_thread(move || task(inner));
+    });
+}
+
+fn setup_frontend_listener(app: &AppHandle) {
+    let overlay_init_handle = app.clone();
+    app.listen("frontend-ready", move |_| {
+        crate::webview_guard::frontend_ready();
+        if FRONTEND_HANDLED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        log::info!("[Window] Frontend ready, initializing overlay...");
+        #[cfg(target_os = "windows")]
+        if let Some(window) = overlay_init_handle.get_webview_window("main") {
+            // Apply here (not at window creation) so CoreWebView2 is guaranteed
+            // to exist — applying earlier can silently no-op and leave F6 crashing.
+            disable_browser_accelerator_keys(&window);
+        }
+        run_after(&overlay_init_handle, 350, |handle| {
+            crate::indicator::init(&handle);
+            sync_indicator_config(&handle);
+        });
+        run_after(&overlay_init_handle, 600, |handle| {
+            if let Err(e) = overlay::init_overlay(&handle) {
+                log::error!("[Window] Overlay init failed: {e}");
+            }
+        });
+    });
+}
+
+fn setup_close_handler(app: &AppHandle) {
+    if !std::env::args().any(|a| a == "--autostart") {
+        return;
+    }
+    if !TRAY_AVAILABLE.load(Ordering::SeqCst) {
+        log::warn!(
+            "[Window] Autostart launch without a tray icon; leaving the main window visible so it stays closable"
+        );
+        return;
+    }
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+}
+
+fn create_clicker_state() -> ClickerState {
+    let state = ClickerState {
+        running: Arc::new(AtomicBool::new(false)),
+        run_generation: AtomicU64::new(0),
+        settings: Mutex::new(ClickerSettings::default()),
+        last_error: Mutex::new(None),
+        stop_reason: Mutex::new(None),
+        active_click_point_index: AtomicI64::new(-1),
+        active_click_point_tick: AtomicU64::new(0),
+        registered_hotkey: Mutex::new(None),
+        master_key: Mutex::new(None),
+        master_hold_mode: AtomicBool::new(false),
+        master_enabled: AtomicBool::new(true),
+        master_allowed: AtomicBool::new(true),
+        elevation_blocked_window: Mutex::new(None),
+        elevation_prompt_generation: AtomicU64::new(0),
+        engine_busy: AtomicBool::new(false),
+        elevation_suppressed: Mutex::new(Vec::new()),
+        elevation_notice_enabled: AtomicBool::new(false),
+        last_master_allowed: AtomicBool::new(true),
+        suppress_hotkey_until_ms: AtomicU64::new(0),
+        suppress_hotkey_until_release: AtomicBool::new(false),
+        hotkey_capture_active: AtomicBool::new(false),
+        click_point_pick_active: AtomicBool::new(false),
+        custom_stop_zone_pick_active: AtomicBool::new(false),
+        settings_initialized: AtomicBool::new(false),
+        paused: Arc::new(AtomicBool::new(false)),
+        paused_by_zone: AtomicBool::new(false),
+        zone_started_generation: AtomicU64::new(0),
+        warning: Mutex::new(None),
+        icon_cache: Mutex::new(crate::icon::init_icon_cache()),
+        icon_state: Mutex::new(IconState {
+            accent_color: String::from("#22c55e"),
+            theme: String::from("dark"),
+            icon_enabled: true,
+            icon_theme: String::from("auto"),
+            icon_color: String::from("theme"),
+            icons_applied: false,
+        }),
+    };
+    crate::startup::mark_state_ready();
+    state
+}
+
+pub fn sync_indicator_config(app: &AppHandle) {
+    let state = app.state::<ClickerState>();
+    let settings = state.settings.lock().unwrap_or_else(poisoned_inner).clone();
+    let (accent, theme) = {
+        let icon_state = state.icon_state.lock().unwrap_or_else(poisoned_inner);
+        (icon_state.accent_color.clone(), icon_state.theme.clone())
+    };
+
+    crate::indicator::apply_config(crate::indicator::IndicatorConfig {
+        enabled: settings.indicator_enabled,
+        corner: settings.indicator_corner,
+        size: settings.indicator_size,
+        offset_x: settings.indicator_offset_x,
+        offset_y: settings.indicator_offset_y,
+        color_mode: settings.indicator_color_mode,
+        accent_hex: accent,
+        custom_hex: settings.indicator_custom_color,
+        flash_enabled: settings.indicator_flash_enabled,
+        flash_dim: settings.indicator_flash_dim,
+        countdown_enabled: settings.indicator_countdown_enabled,
+        countdown_mode: settings.indicator_countdown_mode,
+        background_mode: settings.indicator_background_mode,
+        background_strength: settings.indicator_background_strength,
+        theme,
+    });
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    #[cfg(all(target_os = "windows", debug_assertions))]
+    silence_inherited_stderr();
+
+    crate::startup::mark_start();
+    crate::portable::init();
+    setup_panic_hook();
+
+    let rtss_detected = is_rtss_running();
+    if rtss_detected {
+        let existing = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS").unwrap_or_default();
+        let merged = if existing.trim().is_empty() {
+            String::from("--disable-gpu")
+        } else {
+            format!("{} --disable-gpu", existing.trim())
+        };
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", merged);
+    }
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_persisted_scope::init())
+        .manage(create_clicker_state())
+        .setup(move |app| {
+            let handle = app.handle().clone();
+            setup_logging(&handle);
+            crate::session_end::install();
+            #[cfg(windows)]
+            set_app_aumid();
+
+            if !crate::portable::is_portable() {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
+
+            if crate::ui_commands::persisted_always_run_as_admin(&handle)
+                && crate::elevation::can_elevate()
+            {
+                log::info!("[Elevation] Requesting administrator rights before the window exists");
+                if crate::elevation::relaunch_elevated(true) {
+                    log::info!(
+                        "[Elevation] Restarting as administrator before the window is created"
+                    );
+                    app.handle().exit(0);
+                    return Ok(());
+                }
+                log::warn!("[Elevation] Could not restart as administrator at startup");
+            }
+
+            crate::webview_guard::spawn_window_guard();
+            if let Err(e) = create_main_window(app) {
+                log::error!("[Window] Failed to create main window: {e}");
+                use crate::webview_guard::{
+                    E_MISSING_RUNTIME, E_MISSING_RUNTIME_INSTALLING, E_UNWRITABLE_FOLDER,
+                };
+                let failure = if crate::portable::is_portable()
+                    && !crate::portable::webview2_installed()
+                {
+                    if crate::portable::webview2_bootstrapper_started() {
+                        crate::webview_guard::StartupFailure::with_code(
+                            E_MISSING_RUNTIME_INSTALLING,
+                            String::from("未找到 Microsoft Edge WebView2 运行时。
+
+内置安装程序已自动启动。请稍等片刻，然后重新启动 BlurAutoClicker。"),
+                        )
+                    } else {
+                        crate::webview_guard::StartupFailure::with_code(
+                            E_MISSING_RUNTIME,
+                            String::from("未找到 Microsoft Edge WebView2 运行时，且内置安装程序未能运行。请从以下地址手动安装：
+https://go.microsoft.com/fwlink/p/?LinkId=2124703"),
+                        )
+                    }
+                } else if crate::portable::is_portable()
+                    && crate::portable::ensure_data_dir().is_err()
+                {
+                    crate::webview_guard::StartupFailure::with_code(
+                        E_UNWRITABLE_FOLDER,
+                        format!(
+                            "应用无法启动。
+
+{}
+
+如果你把应用解压到了没有写入权限的文件夹（例如 Program Files），请把它移动到可写入的位置（例如“文档”或桌面）。",
+                            e
+                        ),
+                    )
+                } else {
+                    crate::webview_guard::creation_failure(&e.to_string())
+                };
+                if crate::webview_guard::claim_startup_report() {
+                    #[cfg(target_os = "windows")]
+                    crate::portable::notify_fatal_error(failure.code, &failure.message);
+                    #[cfg(not(target_os = "windows"))]
+                    eprintln!("{}", failure.message);
+                }
+                crate::webview_guard::fatal_exit();
+            }
+
+            crate::webview_guard::window_created();
+
+            #[cfg(target_os = "windows")]
+            if let Some(window) = app.get_webview_window("main") {
+                let style = apply_ws_ex_noactivate(&window, true);
+                log::info!(
+                    "[Window] Applied WS_EX_NOACTIVATE to main window (exstyle {})",
+                    style.map_or_else(|| String::from("unavailable"), |value| format!("0x{value:08x}"))
+                );
+            }
+
+            crate::startup::mark_webview_ready();
+
+            if let Err(e) = setup_tray(&handle) {
+                log::error!("[Window] Tray setup failed, continuing without tray: {e}");
+            }            setup_frontend_listener(&handle);
+            crate::webview_guard::spawn_watchdog(handle.clone());
+            crate::webview_guard::spawn_ui_watchdog(handle.clone());
+
+            if rtss_detected {
+                log::warn!(
+                    "[RTSS] RivaTuner Statistics Server detected. \
+                     WebView2 GPU acceleration disabled to prevent crashes. \
+                     To fix permanently, exclude 'msedgewebview2.exe' in RTSS settings."
+                );
+            }
+
+            std::thread::spawn(|| {
+                if let Err(e) = crate::engine::stats::init() {
+                    log::error!("[stats] Failed to initialize stats database: {e}");
+                }
+            });
+            crate::crash_handler::initialize_crashpad_async();
+
+            sync_indicator_config(&handle);
+            spawn_overlay_auto_hide(&handle);
+            spawn_start_zone_monitor(&handle);
+            window_lifecycle::start_periodic_trimming(30);
+            setup_hotkeys(&handle)?;
+            setup_close_handler(&handle);
+            crate::startup::mark_setup_done();
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            ui_commands::set_webview_zoom,
+            ui_commands::get_text_scale_factor,
+            ui_commands::list_font_families,
+            ui_commands::get_elevation_state,
+            ui_commands::relaunch_as_admin,
+            ui_commands::relaunch_without_admin,
+            ui_commands::focus_main_window,
+            ui_commands::clear_elevation_blocked,
+            ui_commands::set_elevation_notice_enabled,
+            ui_commands::start_clicker,
+            ui_commands::stop_clicker,
+            ui_commands::toggle_clicker,
+            ui_commands::update_settings,
+            ui_commands::get_settings,
+            ui_commands::reset_settings,
+            ui_commands::get_status,
+            ui_commands::register_hotkey,
+            ui_commands::set_hotkey_capture_active,
+            ui_commands::register_master,
+            ui_commands::pick_position,
+            ui_commands::start_click_point_pick,
+            ui_commands::cancel_click_point_pick,
+            ui_commands::start_custom_stop_zone_pick,
+            ui_commands::cancel_custom_stop_zone_pick,
+            ui_commands::get_app_info,
+            ui_commands::get_portable_info,
+            ui_commands::backup_unreadable_settings,
+            ui_commands::set_settings_warning,
+            ui_commands::export_preset_file,
+            ui_commands::import_preset_file,
+            ui_commands::allow_local_media,
+            ui_commands::get_cursor_position,
+            ui_commands::get_stats,
+            ui_commands::get_stats_overview,
+            ui_commands::reset_stats,
+            updates::update_checker::check_for_updates,
+            updates::update_checker::fetch_changelog,
+            overlay::hide_overlay,
+            theme_window::open_theme_window,
+            theme_window::close_theme_window,
+            ui_commands::hide_main_window,
+            ui_commands::quit_app,
+            ui_commands::exit_for_restart,
+            ui_commands::get_autostart_enabled,
+            ui_commands::set_autostart_enabled,
+            ui_commands::list_processes,
+            ui_commands::was_autostart_launch,
+            ui_commands::prepare_main_window,
+            ui_commands::report_startup_ready,
+            crate::webview_guard::frontend_heartbeat,
+            crate::webview_guard::breadcrumb,
+            ui_commands::get_diagnostics_info,
+            ui_commands::open_diagnostics_folder,
+            ui_commands::export_diagnostics_bundle,
+            ui_commands::set_accent_color,
+            ui_commands::get_indicator_config,
+            ui_commands::preview_indicator,
+            ui_commands::debug_trigger_panic,
+            ui_commands::debug_trigger_crash,
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            match &event {
+                tauri::RunEvent::ExitRequested { .. } => {
+                    // Central shutdown: fires for window close, tray quit,
+                    // quit_app, and updater restarts. Drops the crashpad client
+                    // so crashpad_handler.exe terminates instead of being orphaned.
+                    crate::crash_handler::shutdown_crashpad();
+                    crate::indicator::shutdown();
+                }
+                tauri::RunEvent::WindowEvent { event, label, .. } => match event {
+                    tauri::WindowEvent::CloseRequested { api, .. } if label == "main" => {
+                        api.prevent_close();
+                        let minimize_to_tray = app_handle
+                            .state::<ClickerState>()
+                            .settings
+                            .lock()
+                            .unwrap_or_else(poisoned_inner)
+                            .minimize_to_tray;
+                        if minimize_to_tray && TRAY_AVAILABLE.load(Ordering::SeqCst) {
+                            crate::window_lifecycle::on_hide(app_handle);
+                            if let Some(window) = app_handle.get_webview_window("main") {
+                                match window.hide() {
+                                    Ok(()) => {
+                                        let _ = app_handle.emit("minimized-changed", true);
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[Window] Failed to hide the main window: {e}");
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                        crate::app_events::APP_EVENTS_SHUTDOWN
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
+                        crate::overlay::OVERLAY_THREAD_RUNNING
+                            .store(false, std::sync::atomic::Ordering::SeqCst);
+                        ZONE_MONITOR_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+                        crate::click_point_picker::cancel_click_point_pick_inner(app_handle);
+                        crate::custom_stop_zone_picker::cancel_custom_stop_zone_pick_inner(
+                            app_handle,
+                        );
+                        app_handle.exit(0);
+                    }
+                    tauri::WindowEvent::Resized(size) if label == "main" => {
+                        let minimized = size.width == 0 || size.height == 0;
+                        let _ = app_handle.emit("minimized-changed", minimized);
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        });
+}

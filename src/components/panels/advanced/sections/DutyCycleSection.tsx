@@ -1,0 +1,102 @@
+import type { Settings } from "../../../../store";
+import { holdModePatch } from "../../../../cadence";
+
+import {
+  SETTINGS_LIMITS,
+  DUTY_CYCLE_MODE_OPTIONS,
+} from "../../../../settingsSchema";
+import { CardDivider, NumInput } from "./shared";
+
+interface Props {
+  settings: Settings;
+  update: (patch: Partial<Settings>) => void;
+}
+
+export default function DutyCycleSection({ settings, update }: Props) {
+  return (
+    <div className="adv-sectioncontainer adv-basic-card">
+      <div className="adv-card-header">
+        <div
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}
+        >
+          <span style={{ color: "var(--text-dim)" }}>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+              <path d="M6 20v-2a6 6 0 1 1 12 0v2a1 1 0 0 1 -1 1h-10a1 1 0 0 1 -1 -1" />
+              <path d="M6 4v2a6 6 0 1 0 12 0v-2a1 1 0 0 0 -1 -1h-10a1 1 0 0 0 -1 1" />
+            </svg>
+          </span>
+          <span className="adv-card-title">占空比</span>
+        </div>
+        <div className="adv-seg-group">
+          {DUTY_CYCLE_MODE_OPTIONS.map((dutyCycleOption) => (
+            <button
+              key={dutyCycleOption}
+              className={`adv-seg-btn ${settings.dutyCycleMode === dutyCycleOption ? "active" : ""}`}
+              onClick={() => {
+                if (
+                  dutyCycleOption === "Hold" &&
+                  settings.dutyCycleMode !== "Hold"
+                ) {
+                  update(holdModePatch(settings, true));
+                } else if (
+                  dutyCycleOption === "Click" &&
+                  settings.dutyCycleMode !== "Click"
+                ) {
+                  update(holdModePatch(settings, false));
+                }
+              }}
+            >
+              {dutyCycleOption}
+            </button>
+          ))}
+        </div>
+      </div>
+      <CardDivider />
+      <div className="adv-card-desc">
+        {settings.dutyCycleMode === "Click"
+          ? "设置每次点击周期中按住鼠标按键的时长占比。"
+          : "持续按住鼠标按键或键盘按键，并忽略点击速度设置。"}
+      </div>
+      {settings.dutyCycleMode === "Click" && (
+        <div className="adv-row" style={{ gap: 8, justifyContent: "flex-end" }}>
+          <div className="adv-minmax">
+            <div className="adv-numbox-sm">
+              <NumInput
+                value={settings.dutyCycle}
+                onChange={(v) => update({ dutyCycle: v })}
+                min={SETTINGS_LIMITS.dutyCycle.min}
+                max={SETTINGS_LIMITS.dutyCycle.max}
+                allowDecimal
+              />
+              <span className="adv-unit">%</span>
+            </div>
+          </div>
+          <span
+            style={{
+              color: "var(--text-dim)",
+              fontSize: "13px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            每周期占比
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
