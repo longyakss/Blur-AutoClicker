@@ -191,7 +191,11 @@ export default function ClickerTypeSection({ settings, update }: Props) {
                   className={`adv-seg-btn ${settings.mouseButton === mouseButtonOption ? "active" : ""}`}
                   onClick={() => handleMouseButtonSelect(mouseButtonOption)}
                 >
-                  {mouseButtonOption}
+                  {mouseButtonOption === "Left"
+                    ? "左键"
+                    : mouseButtonOption === "Middle"
+                      ? "中键"
+                      : "右键"}
                 </button>
               ))}
             </div>

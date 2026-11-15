@@ -341,7 +341,7 @@ export default function SimpleCadenceInput({ settings, update }: Props) {
             inputMode="decimal"
             className="simple-inline-input simple-cadence-input"
             value={draftCps ?? settings.clickSpeed}
-            aria-label="Clicks Per"
+            aria-label="点击次数"
             onChange={handleCpsChange}
             onKeyDown={(event) => {
               if (event.key !== "Enter") return;
@@ -357,7 +357,7 @@ export default function SimpleCadenceInput({ settings, update }: Props) {
             onWheel={handleCpsWheel}
           />
           <div className="vertical-devider vertical-devider--stretch" />
-          <span className="simple-control-label">Clicks Per</span>
+          <span className="simple-control-label">次/</span>
           <div className="vertical-devider vertical-devider--stretch" />
           <AdvDropdown
             value={settings.clickInterval}
@@ -422,7 +422,7 @@ export default function SimpleCadenceInput({ settings, update }: Props) {
             />
           </div>
           <div className="vertical-devider vertical-devider--stretch" />
-          <span className="simple-control-label">Per Click</span>
+          <span className="simple-control-label">点击间隔</span>
           <div className="vertical-devider vertical-devider--stretch" />
           <AdvDropdown
             value={settings.rateInputMode}

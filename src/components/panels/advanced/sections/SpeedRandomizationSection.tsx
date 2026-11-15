@@ -57,7 +57,7 @@ export default function SpeedRandomizationSection({ settings, update }: Props) {
               />
             </svg>
           </span>
-          <span className="adv-card-title">Speed Randomization</span>
+          <span className="adv-card-title">速度随机化</span>
         </div>
         <ToggleBtn
           value={settings.speedRandomizationEnabled}
@@ -67,10 +67,10 @@ export default function SpeedRandomizationSection({ settings, update }: Props) {
       <CardDivider />
       <Disableable
         enabled={settings.speedRandomizationEnabled}
-        disabledReason="Enable Speed Randomization to set the random percentage."
+        disabledReason="启用速度随机化后才能设置随机百分比。"
       >
         <div className="adv-card-desc">
-          Randomizes the delay between each click by this percentage.
+          按此百分比随机化每次点击之间的延迟。
         </div>
         <div className="adv-row" style={{ gap: 8, justifyContent: "flex-end" }}>
           <div className="adv-numbox-sm">

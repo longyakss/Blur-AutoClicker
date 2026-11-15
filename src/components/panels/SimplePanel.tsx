@@ -57,7 +57,7 @@ function handleWheelStep(
 
 const CLICK_MODE_OPTIONS = MODE_OPTIONS.map((mode) => ({
   value: mode,
-  label: mode === "Toggle" ? "Toggle" : "Hold",
+  label: mode === "Toggle" ? "切换" : "按住",
 }));
 
 const MOUSE_BUTTONS = ["Left", "Middle", "Right"] as const;
@@ -159,8 +159,8 @@ function SimplePanel({ settings, update }: SimplePanelProps) {
       settings.keyboardKey,
       keyboardKeyCaseIsUpper,
     );
-  const hotkeyConflicts = hasConflict ? ["Auto-press key"] : [];
-  const autoPressKeyConflicts = hasConflict ? ["Hotkey"] : [];
+  const hotkeyConflicts = hasConflict ? ["自动按键"] : [];
+  const autoPressKeyConflicts = hasConflict ? ["快捷键"] : [];
 
   return (
     <div className="vcontainer simple-panel">
@@ -217,8 +217,8 @@ function SimplePanel({ settings, update }: SimplePanelProps) {
               type="button"
               className={`simple-input-type-btn ${settings.inputType === "mouse" ? "active" : ""}`}
               onClick={() => update({ inputType: "mouse" })}
-              title="Mouse"
-              aria-label="Mouse"
+              title="鼠标"
+              aria-label="鼠标"
             >
               <svg
                 width="16"
@@ -245,8 +245,8 @@ function SimplePanel({ settings, update }: SimplePanelProps) {
               type="button"
               className={`simple-input-type-btn ${settings.inputType === "keyboard" ? "active" : ""}`}
               onClick={() => update({ inputType: "keyboard" })}
-              title="Keyboard"
-              aria-label="Keyboard"
+              title="键盘"
+              aria-label="键盘"
             >
               <svg
                 width="16"
@@ -306,14 +306,14 @@ function SimplePanel({ settings, update }: SimplePanelProps) {
                 }`}
                 aria-label={
                   keyboardKeyCaseIsUpper
-                    ? "Send letters as uppercase"
-                    : "Send letters as lowercase"
+                    ? "以大写字母发送"
+                    : "以小写字母发送"
                 }
                 aria-pressed={keyboardKeyCaseIsUpper}
                 title={
                   canToggleKeyboardKeyCase
-                    ? "Toggle keyboard key case"
-                    : "Key case applies to letters only"
+                    ? "切换键盘按键大小写"
+                    : "大小写仅对字母生效"
                 }
                 disabled={!canToggleKeyboardKeyCase}
                 onClick={toggleKeyboardKeyCase}
@@ -326,7 +326,7 @@ function SimplePanel({ settings, update }: SimplePanelProps) {
 
         <ControlBox className="simple-row-item">
           <NumberField
-            label="Duty Cycle"
+            label="占空比"
             value={settings.dutyCycle}
             min={SETTINGS_LIMITS.dutyCycle.min!}
             max={SETTINGS_LIMITS.dutyCycle.max!}
@@ -337,7 +337,7 @@ function SimplePanel({ settings, update }: SimplePanelProps) {
 
         <ControlBox className="simple-row-item">
           <NumberField
-            label="Speed Randomization"
+            label="速度随机化"
             value={settings.speedRandomization}
             min={SETTINGS_LIMITS.speedRandomization.min!}
             max={SETTINGS_LIMITS.speedRandomization.max!}

@@ -185,3 +185,4 @@ export default function LimitsSection({ settings, update }: Props) {
       </Disableable>
     </div>
   );
+}

@@ -61,7 +61,7 @@ export default function DutyCycleSection({ settings, update }: Props) {
                 }
               }}
             >
-              {dutyCycleOption}
+              {dutyCycleOption === "Click" ? "点击" : "按住"}
             </button>
           ))}
         </div>

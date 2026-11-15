@@ -58,7 +58,7 @@ export default function HotkeySection({ settings, update }: Props) {
               className={`adv-seg-btn ${settings.mode === clickModeOption ? "active" : ""}`}
               onClick={() => update({ mode: clickModeOption })}
             >
-              {clickModeOption}
+              {clickModeOption === "Toggle" ? "切换" : "按住"}
             </button>
           ))}
         </div>

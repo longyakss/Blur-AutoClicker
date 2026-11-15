@@ -488,7 +488,7 @@ export default function ClickPointsContent({
   return (
     <div className="adv-sectioncontainer adv-click-points-card">
       <div className="adv-card-header">
-        <span className="adv-card-title">Click Points</span>
+        <span className="adv-card-title">点击点</span>
         <ToggleBtn
           value={settings.clickPointsEnabled}
           onChange={(v) => {
@@ -501,8 +501,7 @@ export default function ClickPointsContent({
       </div>
       <CardDivider />
       <div className="adv-card-desc">
-        Clicks the spots in the list in order, using your current click speed.
-        Add a single point to click the same place repeatedly.
+        按顺序点击列表中的位置，并使用当前的点击速度。只添加一个点即可在同一位置反复点击。
       </div>
       <Disableable enabled={settings.clickPointsEnabled}>
         <div className="adv-click-points-body">
@@ -514,7 +513,7 @@ export default function ClickPointsContent({
                 void (picking ? cancelPick() : startPick());
               }}
             >
-              {picking ? "Cancel Picking" : "Start Picking"}
+              {picking ? "取消选点" : "开始选点"}
             </button>
             <div className="adv-click-points-list-shell">
               <div ref={listViewportRef} className="adv-click-points-list">
@@ -540,11 +539,11 @@ export default function ClickPointsContent({
                       </svg>
                     </div>
                     <div className="adv-click-points-empty-title">
-                      No click points yet
+                      暂无点击点
                     </div>
                     <div className="adv-click-points-empty-hint">
-                      Hit <strong>Start Picking</strong> above, then right-click
-                      anywhere on screen to add a new click point.
+                      点击上方的 <strong>开始选点</strong>，然后在屏幕任意位置
+                      右键即可添加新的点击点。
                     </div>
                   </div>
                 ) : (
@@ -583,10 +582,10 @@ export default function ClickPointsContent({
           <div className="adv-click-points-footer">
             <div className="adv-click-points-option-row">
               {showInfo ? (
-                <InfoIcon text="When enabled, the clicker stops after one full pass through all click points. When disabled, it loops through the list endlessly." />
+                <InfoIcon text="启用后，连点器在完整遍历所有点击点一遍后停止。禁用后，将无限循环点击列表。" />
               ) : null}
               <span className="adv-click-points-option-label">
-                Stop when complete
+                完成后停止
               </span>
               <ToggleBtn
                 value={settings.stopWhenComplete ?? false}

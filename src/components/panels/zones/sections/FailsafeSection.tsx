@@ -41,7 +41,7 @@ export default function FailsafeSection({ settings, update }: Props) {
               gap: "0.5rem",
             }}
           >
-            <span className="adv-card-title">Corner Stop</span>
+            <span className="adv-card-title">角落停止</span>
           </div>
           <ToggleBtn
             value={settings.cornerStopEnabled}
@@ -50,12 +50,11 @@ export default function FailsafeSection({ settings, update }: Props) {
         </div>
         <CardDivider />
         <div className="adv-card-desc">
-          Stops the clicker when the cursor enters a corner of a monitor. Each
-          value sets the corner box size in pixels.
+          当光标进入显示器角落时停止连点器。每个数值设置角落区域的大小（像素）。
         </div>
         <Disableable
           enabled={settings.cornerStopEnabled}
-          disabledReason="Enable Corner Stop to change the corner sizes."
+          disabledReason="启用角落停止后才能更改角落大小。"
         >
           <div className="adv-row" style={{ gap: 8 }}>
             <div className="adv-corner-grid">
@@ -91,7 +90,7 @@ export default function FailsafeSection({ settings, update }: Props) {
               gap: "0.5rem",
             }}
           >
-            <span className="adv-card-title">Edge Stop</span>
+            <span className="adv-card-title">边缘停止</span>
           </div>
           <ToggleBtn
             value={settings.edgeStopEnabled}
@@ -100,12 +99,11 @@ export default function FailsafeSection({ settings, update }: Props) {
         </div>
         <CardDivider />
         <div className="adv-card-desc">
-          Stops the clicker when the cursor reaches an edge of a monitor. Each
-          value sets the edge strip width in pixels.
+          当光标到达显示器边缘时停止连点器。每个数值设置边缘条带的宽度（像素）。
         </div>
         <Disableable
           enabled={settings.edgeStopEnabled}
-          disabledReason="Enable Edge Stop to change the edge widths."
+          disabledReason="启用边缘停止后才能更改边缘宽度。"
         >
           <div className="adv-row" style={{ gap: 8 }}>
             <div className="adv-corner-grid">

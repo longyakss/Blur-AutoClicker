@@ -26,9 +26,9 @@ interface StopZonePickedPayload {
 }
 
 const ACTION_OPTIONS = [
-  { value: "stop", label: "Stop" },
-  { value: "pause", label: "Pause" },
-  { value: "start", label: "Start" },
+  { value: "stop", label: "停止" },
+  { value: "pause", label: "暂停" },
+  { value: "start", label: "开始" },
 ] as const;
 
 export default function StopZonesSection({ settings, update }: Props) {
@@ -202,7 +202,7 @@ export default function StopZonesSection({ settings, update }: Props) {
   return (
     <div className="adv-sectioncontainer adv-stop-zones-card">
       <div className="adv-card-header">
-        <span className="adv-card-title">Custom Stop Zones</span>
+        <span className="adv-card-title">自定义停止区域</span>
         <ToggleBtn
           value={settings.stopZonesEnabled}
           onChange={(v) => {
@@ -215,9 +215,7 @@ export default function StopZonesSection({ settings, update }: Props) {
       </div>
       <CardDivider />
       <div className="adv-card-desc">
-        Draw zones on screen. Stop ends the run as soon as the cursor enters a
-        zone, Pause holds clicks while the cursor stays inside, and Start begins
-        a run on entry and ends that run when the cursor leaves.
+        在屏幕上绘制区域。停止会在光标进入区域时立即结束运行；暂停会在光标停留在区域内时抑制点击；开始会在光标进入时开始运行，离开时结束该运行。
       </div>
       <Disableable enabled={settings.stopZonesEnabled}>
         <div className="adv-stop-zone-body">
@@ -229,7 +227,7 @@ export default function StopZonesSection({ settings, update }: Props) {
                   className="adv-secondary-btn"
                   onClick={addZone}
                 >
-                  Add Zone
+                  添加区域
                 </button>
               </div>
             )}
@@ -249,7 +247,7 @@ export default function StopZonesSection({ settings, update }: Props) {
                       }}
                       onClick={addZone}
                     >
-                      Add Zone
+                      添加区域
                     </button>
                     <div className="adv-zones-empty-icon">
                       <svg
@@ -275,10 +273,10 @@ export default function StopZonesSection({ settings, update }: Props) {
                         <line x1="9" y1="3" x2="9" y2="21" />
                       </svg>
                     </div>
-                    <div className="adv-zones-empty-title">No zones yet</div>
+                    <div className="adv-zones-empty-title">暂无区域</div>
                     <div className="adv-zones-empty-hint">
-                      Click <strong>Add Zone</strong> above, then click{" "}
-                      <strong>Edit</strong> on a row to draw its area on screen.
+                      点击上方的 <strong>添加区域</strong>，然后点击某行的{" "}
+                      <strong>编辑</strong> 在屏幕上绘制其区域。
                     </div>
                   </div>
                 ) : (
@@ -344,14 +342,14 @@ export default function StopZonesSection({ settings, update }: Props) {
                             : startDraw(index))
                         }
                       >
-                        {drawingIndex === index ? "Cancel" : "Edit"}
+                        {drawingIndex === index ? "取消" : "编辑"}
                       </button>
                       <button
                         type="button"
                         className="adv-click-points-delete"
                         onClick={() => removeZone(index)}
-                        aria-label="Delete zone"
-                        title="Delete zone"
+                        aria-label="删除区域"
+                        title="删除区域"
                       >
                         <svg
                           width="16"

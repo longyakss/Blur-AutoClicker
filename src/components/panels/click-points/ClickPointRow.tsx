@@ -107,7 +107,7 @@ function ClickPointRow({
         <button
           type="button"
           className="adv-click-points-drag-handle"
-          aria-label="Reorder click point"
+          aria-label="调整点击点顺序"
           onPointerDown={(event) => {
             event.preventDefault();
             const handle = event.currentTarget;
@@ -165,7 +165,7 @@ function ClickPointRow({
         style={LABEL_STYLE}
       >
         <span className="adv-unit" style={UNIT_CLICKS_STYLE}>
-          clicks
+          次
         </span>
         <NumInput
           hoverWheel={false}
@@ -183,7 +183,7 @@ function ClickPointRow({
         <span
           className="adv-unit"
           style={UNIT_R_STYLE}
-          title="Random offset radius in pixels"
+          title="随机偏移半径（像素）"
         >
           px
         </span>
@@ -201,8 +201,8 @@ function ClickPointRow({
           type="button"
           className="adv-click-points-delete"
           onClick={() => onDelete(index)}
-          aria-label="Delete click point"
-          title="Delete click point"
+          aria-label="删除点击点"
+          title="删除点击点"
         >
           <svg
             width="16"

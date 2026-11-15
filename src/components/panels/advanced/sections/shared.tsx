@@ -53,14 +53,14 @@ const ToggleBtn = memo(function ToggleBtn({
         onClick={() => !disabled && onChange(false)}
         disabled={disabled}
       >
-        Off
+        关
       </button>
       <button
         className={`adv-toggle-btn adv-toggle-on ${value ? "active" : ""} ${disabled ? "adv-disabled" : ""}`}
         onClick={() => !disabled && onChange(true)}
         disabled={disabled}
       >
-        On
+        开
       </button>
     </div>
   );
@@ -90,7 +90,7 @@ export function Disableable({
       <div className={enabled ? "" : "adv-disabled-content"}>{children}</div>
       {!enabled && (
         <div className="adv-disabled-overlay">
-          <span className="adv-disabled-label">Disabled</span>
+          <span className="adv-disabled-label">已禁用</span>
         </div>
       )}
     </div>
@@ -767,7 +767,7 @@ export function AdvDropdown({
                 className="adv-dropdown-search"
                 type="text"
                 value={query}
-                placeholder="Search"
+                placeholder="搜索"
                 onChange={handleQueryChange}
                 onKeyDown={handleSearchKeyDown}
               />

@@ -14,15 +14,15 @@ import type { CadenceDurationFields } from "../cadence";
 import type { RateInputMode, Settings } from "../store";
 
 export const INTERVAL_OPTIONS = [
-  { value: "s", label: "Second" },
-  { value: "m", label: "Minute" },
-  { value: "h", label: "Hour" },
-  { value: "d", label: "Day" },
+  { value: "s", label: "秒" },
+  { value: "m", label: "分钟" },
+  { value: "h", label: "小时" },
+  { value: "d", label: "天" },
 ] as const;
 
 export const SIMPLE_RATE_INPUT_MODE_OPTIONS = [
-  { value: "rate", label: "Rate" },
-  { value: "duration", label: "Interval" },
+  { value: "rate", label: "速率" },
+  { value: "duration", label: "间隔" },
 ] as const;
 
 export function parseIntegerRaw(raw: string) {
