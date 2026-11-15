@@ -31,6 +31,20 @@
 
 </div>
 
+> [!NOTE]
+> **🇨🇳 简体中文汉化版（本 Fork）** — 本仓库是 [Blur009/Blur-AutoClicker](https://github.com/Blur009/Blur-AutoClicker) 的非官方简体中文汉化版，基于上游 **v3.10.2**，改动仅存在于 `zh-CN` 分支。以下为本次更新内容（2026-11-15）：
+>
+> - **全量界面汉化（约 950 条）**：主界面、设置面板（含设置搜索索引）、高级/区域/点击点面板、悬浮窗与点击指示器、主题自定义窗口、托盘菜单、系统通知、崩溃与 UAC 权限提示、首次运行向导
+> - **术语全篇统一**：快捷键、悬浮窗、点击点、停止区域、紧急停止、占空比等；图表日期格式切换为 `zh-CN`
+> - **功能零改动**：与后端交互的协议字符串（停止原因枚举、事件名、存储键等）保持英文，设置数据与上游完全兼容
+> - **新增构建流水线** `.github/workflows/build-zh.yml`：推送 `zh-CN` 分支自动构建绿色便携版（已关闭更新器签名，本版无自动更新）
+>
+> **获取中文版**：[Actions](https://github.com/longyakss/Blur-AutoClicker/actions) → "Build zh-CN portable" → 成功的运行 → Artifacts 下载 `BlurAutoClicker-zh-CN-portable`（需登录 GitHub，解压即用）。
+>
+> **已知残留**：少数与设置值直接绑定的枚举文本（如部分位置的鼠标键 Left/Middle/Right）保留英文——汉化它们需改动设置存储结构，为保证与上游设置兼容而保留。
+>
+> 上游英文原版：[Blur009/Blur-AutoClicker](https://github.com/Blur009/Blur-AutoClicker)。本 Fork 遵循上游 **GPLv3** 许可。
+
 ---
 Most auto clickers aren't accurate at high speeds. Set it to 50 CPS and you might get 40. Or 60. This one actually hits the speed you set. It also bundles the useful features from other auto clickers into one place, and adds a few extras. RAM is around 100mb and stays under 200mb (yes its a lot but sadly it cant be reduced due to Webview2).
 
