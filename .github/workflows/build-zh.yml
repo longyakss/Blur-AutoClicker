@@ -4,6 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches: [zh-CN]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'screenshots/**'
+      - '**.png'
+      - '**.svg'
+      - '**.jpg'
 
 permissions:
   contents: read
