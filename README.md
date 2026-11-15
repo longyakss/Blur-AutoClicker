@@ -39,7 +39,7 @@
 > - **功能零改动**：与后端交互的协议字符串（停止原因枚举、事件名、存储键等）保持英文，设置数据与上游完全兼容
 > - **新增构建流水线** `.github/workflows/build-zh.yml`：推送 `zh-CN` 分支自动构建绿色便携版（已关闭更新器签名，本版无自动更新）
 >
-> **获取中文版**：[Actions](https://github.com/longyakss/Blur-AutoClicker/actions) → "Build zh-CN portable" → 成功的运行 → Artifacts 下载 `BlurAutoClicker-zh-CN-portable`（需登录 GitHub，解压即用）。
+> **获取中文版**：直接下载 → [BlurAutoClicker-v3.10.2-zh-portable.zip](https://github.com/longyakss/Blur-AutoClicker/releases/download/zh-v3.10.2/BlurAutoClicker-v3.10.2-zh-portable.zip)（绿色免安装，解压即用）；其他版本见 [Releases](https://github.com/longyakss/Blur-AutoClicker/releases)。
 >
 > **已知残留**：少数与设置值直接绑定的枚举文本（如部分位置的鼠标键 Left/Middle/Right）保留英文——汉化它们需改动设置存储结构，为保证与上游设置兼容而保留。
 >
